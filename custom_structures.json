@@ -1,49 +1,42 @@
 [
   {
-    "name": "ㄹㅂㄹㅂㄹㅂㄹㅂ",
+    "name": "fqfqfqfㄹㅁㄹㅁㄹ",
     "fields": [
       {
-        "name": "ㅂㄹㅂㅂ",
-        "field_type": "Text"
-      }
-    ]
-  },
-  {
-    "name": "인적사항",
-    "fields": [
-      {
-        "name": "이름",
-        "field_type": "Text"
+        "name": "ㄹㄹㅁㄹㅁㅁㄹ",
+        "fields": [
+          {
+            "name": "이름",
+            "field_type": "Text"
+          }
+        ]
       },
       {
-        "name": "니이",
-        "field_type": "Text"
+        "name": "ㄹㄹㅁㄹㅁㅁㄹㅁㄹ",
+        "fields": []
       }
     ]
   },
   {
-    "name": "ㅂㅂㄹㅂㄹㄹㅂ",
+    "name": "ㄹㅂㄹㅂㄹㅂㄹㄹㄹㄹㅁㄹㅁㄹㅁ",
+    "fields": []
+  },
+  {
+    "name": "ㅁㅁㄹㄹㅁㄹ",
+    "fields": []
+  },
+  {
+    "name": "인사관리",
     "fields": [
       {
-        "name": "ㅂㄹㅂㄹㅂ",
-        "field_type": "Text"
+        "name": "직원",
+        "fields": [
+          {
+            "name": "이름",
+            "field_type": "Text"
+          }
+        ]
       }
     ]
-  },
-  {
-    "name": "ㄹㅂㄹㅂㄹ",
-    "fields": []
-  },
-  {
-    "name": "ㄹㅂㄹㅂㄹㄹ",
-    "fields": []
-  },
-  {
-    "name": "ㄹㅂㄹㅂㄹㄹ22",
-    "fields": []
-  },
-  {
-    "name": "ㄹㅂㄹㅂㄹㄹ22ㄹㅂㄹ",
-    "fields": []
   }
 ]
