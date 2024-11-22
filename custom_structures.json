@@ -1,14 +1,49 @@
 [
   {
-    "name": "ㅂㅁㄹㅁㄹ",
+    "name": "ㄹㅂㄹㅂㄹㅂㄹㅂ",
     "fields": [
-      ""
+      {
+        "name": "ㅂㄹㅂㅂ",
+        "field_type": "Text"
+      }
     ]
   },
   {
-    "name": "ㅂㅁㄹㅁㄹㅂㄹㅂㄹㅂ",
+    "name": "인적사항",
     "fields": [
-      ""
+      {
+        "name": "이름",
+        "field_type": "Text"
+      },
+      {
+        "name": "니이",
+        "field_type": "Text"
+      }
     ]
+  },
+  {
+    "name": "ㅂㅂㄹㅂㄹㄹㅂ",
+    "fields": [
+      {
+        "name": "ㅂㄹㅂㄹㅂ",
+        "field_type": "Text"
+      }
+    ]
+  },
+  {
+    "name": "ㄹㅂㄹㅂㄹ",
+    "fields": []
+  },
+  {
+    "name": "ㄹㅂㄹㅂㄹㄹ",
+    "fields": []
+  },
+  {
+    "name": "ㄹㅂㄹㅂㄹㄹ22",
+    "fields": []
+  },
+  {
+    "name": "ㄹㅂㄹㅂㄹㄹ22ㄹㅂㄹ",
+    "fields": []
   }
 ]
