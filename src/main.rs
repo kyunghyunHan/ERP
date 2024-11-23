@@ -4,9 +4,11 @@ use calamine::Reader;
 use calamine::Xlsx;
 use eframe::egui;
 use egui::{Context, FontData, FontDefinitions, FontFamily, ScrollArea, Ui, Vec2};
+use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
+use std::error::Error;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
@@ -95,29 +97,34 @@ impl ERPApp {
     fn load_structure_data(&mut self, structure_name: &str) {
         if let Ok(mut rdr) = csv::Reader::from_path(format!("{}.csv", structure_name)) {
             let mut rows = Vec::new();
-            
+
             for result in rdr.records() {
                 if let Ok(record) = result {
                     if let Some(structure) = self.find_structure(structure_name) {
                         let mut row_data = HashMap::new();
-                        
+
                         for (idx, field) in structure.fields.iter().enumerate() {
                             let value = record.get(idx).unwrap_or_default().to_string();
-                            row_data.insert(field.name.clone(), FieldValue {
-                                value,
-                                field_type: field.field_type.clone(),
-                            });
+                            row_data.insert(
+                                field.name.clone(),
+                                FieldValue {
+                                    value,
+                                    field_type: field.field_type.clone(),
+                                },
+                            );
                         }
-                        
+
                         rows.push(row_data);
                     }
                 }
             }
-            
+
             self.erp_data.data.insert(structure_name.to_string(), rows);
             self.save_erp_data();
         } else {
-            self.erp_data.data.insert(structure_name.to_string(), Vec::new());
+            self.erp_data
+                .data
+                .insert(structure_name.to_string(), Vec::new());
             self.save_erp_data();
         }
     }
@@ -141,6 +148,125 @@ impl ERPApp {
                 self.save_erp_data(); // 빈 데이터 파일 생성
             }
         }
+    }
+    // Excel 내보내기 (파일 선택 대화상자 사용)
+    fn export_to_excel(
+        &self,
+        structure: &CustomStructure,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Excel Files", &["xlsx"])
+            .set_file_name(&format!("{}.xlsx", structure.name))
+            .save_file()
+        {
+            let workbook = Workbook::new(path.to_str().unwrap())?;
+            let mut sheet = workbook.add_worksheet(None)?;
+
+            // 헤더 작성
+            for (col, field) in structure.fields.iter().enumerate() {
+                sheet.write_string(0, col as u16, &field.name, None)?;
+            }
+
+            // 데이터 작성
+            if let Some(rows) = self.erp_data.data.get(&structure.name) {
+                for (row_idx, row_data) in rows.iter().enumerate() {
+                    for (col, field) in structure.fields.iter().enumerate() {
+                        if let Some(field_value) = row_data.get(&field.name) {
+                            match field_value.field_type {
+                                FieldType::Number => {
+                                    if let Ok(num) = field_value.value.parse::<f64>() {
+                                        sheet.write_number(
+                                            row_idx as u32 + 1,
+                                            col as u16,
+                                            num,
+                                            None,
+                                        )?;
+                                    } else {
+                                        sheet.write_string(
+                                            row_idx as u32 + 1,
+                                            col as u16,
+                                            &field_value.value,
+                                            None,
+                                        )?;
+                                    }
+                                }
+                                FieldType::Boolean => {
+                                    if let Ok(bool_val) = field_value.value.parse::<bool>() {
+                                        sheet.write_boolean(
+                                            row_idx as u32 + 1,
+                                            col as u16,
+                                            bool_val,
+                                            None,
+                                        )?;
+                                    } else {
+                                        sheet.write_string(
+                                            row_idx as u32 + 1,
+                                            col as u16,
+                                            &field_value.value,
+                                            None,
+                                        )?;
+                                    }
+                                }
+                                _ => {
+                                    sheet.write_string(
+                                        row_idx as u32 + 1,
+                                        col as u16,
+                                        &field_value.value,
+                                        None,
+                                    )?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            workbook.close()?;
+            println!("Excel 파일 저장 완료!");
+        }
+        Ok(())
+    }
+    fn import_from_excel(&mut self, structure: &CustomStructure) -> Result<(), Box<dyn Error>> {
+        // 파일 선택 대화상자
+        if let Some(path) = FileDialog::new()
+            .add_filter("Excel Files", &["xlsx"])
+            .pick_file()
+        {
+            let mut workbook: Xlsx<_> = open_workbook(path)?;
+            let range = match workbook.worksheet_range_at(0) {
+                Some(Ok(range)) => range,
+                Some(Err(e)) => return Err(e.into()),
+                None => return Err("시트가 비어있습니다".into()),
+            };
+
+            let mut rows = Vec::new();
+            for row_idx in 1..range.height() {
+                let mut row_data = HashMap::new();
+                for (col_idx, field) in structure.fields.iter().enumerate() {
+                    let value = match range.get_value((row_idx as u32, col_idx as u32)) {
+                        Some(DataType::Int(i)) => i.to_string(),
+                        Some(DataType::Float(f)) => f.to_string(),
+                        Some(DataType::String(s)) => s.to_string(),
+                        Some(DataType::Bool(b)) => b.to_string(),
+                        _ => String::new(),
+                    };
+                    row_data.insert(
+                        field.name.clone(),
+                        FieldValue {
+                            value,
+                            field_type: field.field_type.clone(),
+                        },
+                    );
+                }
+                rows.push(row_data);
+            }
+
+            // 데이터 저장 및 CSV 자동 백업
+            self.erp_data.data.insert(structure.name.clone(), rows);
+            self.save_to_csv(&structure.name);
+            println!("Excel 파일 불러오기 완료!");
+        }
+        Ok(())
     }
     fn save_erp_data(&self) {
         if let Ok(json_data) = serde_json::to_string_pretty(&self.erp_data) {
@@ -622,17 +748,16 @@ impl ERPApp {
                 ui.horizontal(|ui| {
                     ui.heading(&structure.name);
                     let structure_clone = structure.clone();
-
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("📥 CSV 내보내기").clicked() {
-                            if let Err(e) = self.save_as_csv(&structure_clone) {
-                                eprintln!("CSV 내보내기 실패: {}", e);
+                        if ui.button("📥 Excel 내보내기").clicked() {
+                            if let Err(e) = self.export_to_excel(&structure_clone) {
+                                eprintln!("Excel 내보내기 실패: {}", e);
                             }
                         }
 
-                        if ui.button("📤 CSV 불러오기").clicked() {
-                            if let Err(e) = self.load_from_csv(&structure_clone) {
-                                eprintln!("CSV 불러오기 실패: {}", e);
+                        if ui.button("📤 Excel 불러오기").clicked() {
+                            if let Err(e) = self.import_from_excel(&structure_clone) {
+                                eprintln!("Excel 불러오기 실패: {}", e);
                             }
                         }
 
@@ -654,7 +779,7 @@ impl ERPApp {
                                 .or_default()
                                 .push(new_row);
 
-                            self.save_erp_data();
+                            self.save_to_csv(&structure_clone.name);
                         }
                     });
                 });
