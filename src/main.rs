@@ -49,38 +49,112 @@ struct CustomStructure {
     name: String,
     fields: Vec<Field>,
 }
+
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug)]
+struct SubCategory {
+    name: String,
+    structures: Vec<CustomStructure>,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug)]
 struct CustomCategory {
     name: String,
-    fields: Vec<CustomStructure>,
+    subcategories: Vec<SubCategory>,
 }
-#[derive(Clone, Default, Serialize, Deserialize)]
+
+#[derive(Default)]
 struct ERPApp {
     custom_structures: Vec<CustomCategory>,
     current_structure: CustomStructure,
+    current_subcategory: Option<String>, // 현재 선택된 서브카테고리
     show_setting_panel: bool,
+    show_structure_editor: bool,
     erp_data: ERPData,
-    show_structure_editor: bool, // 추가된 필드
-
     selected_structure: Option<String>,
+    selected_category: Option<String>,
     expanded_categories: HashMap<String, bool>,
-    selected_category: Option<String>, // 현재 선택된 카테고리
+    expanded_subcategories: HashMap<String, bool>, // 서브카테고리 확장 상태
 }
 
 impl ERPApp {
-    // ERP 데이터 저장/로드 함수
+    fn find_structure(&self, structure_name: &str) -> Option<CustomStructure> {
+        for category in &self.custom_structures {
+            for subcategory in &category.subcategories {
+                if let Some(structure) = subcategory
+                    .structures
+                    .iter()
+                    .find(|s| s.name == structure_name)
+                {
+                    return Some(structure.clone());
+                }
+            }
+        }
+        None
+    }
 
+    fn load_structure_data(&mut self, structure_name: &str) {
+        // CSV 파일에서 데이터 로드 시도
+        if let Ok(mut rdr) = csv::Reader::from_path(format!("{}.csv", structure_name)) {
+            let mut rows = Vec::new();
+
+            for result in rdr.records() {
+                if let Ok(record) = result {
+                    if let Some(structure) = self.find_structure(structure_name) {
+                        let mut row_data = HashMap::new();
+
+                        for (idx, field) in structure.fields.iter().enumerate() {
+                            let value = record.get(idx).unwrap_or_default().to_string();
+                            row_data.insert(
+                                field.name.clone(),
+                                FieldValue {
+                                    value,
+                                    field_type: field.field_type.clone(),
+                                },
+                            );
+                        }
+
+                        rows.push(row_data);
+                    }
+                }
+            }
+
+            // 데이터 저장
+            self.erp_data.data.insert(structure_name.to_string(), rows);
+            self.save_erp_data();
+        } else {
+            // CSV 파일이 없으면 빈 데이터로 초기화
+            self.erp_data
+                .data
+                .insert(structure_name.to_string(), Vec::new());
+            self.save_erp_data();
+        }
+    }
     fn load_erp_data(&mut self) {
-        if let Ok(data) = fs::read_to_string("erp_data.json") {
-            if let Ok(loaded_data) = serde_json::from_str(&data) {
-                self.erp_data = loaded_data;
+        match fs::read_to_string("erp_data.json") {
+            Ok(data) => {
+                match serde_json::from_str(&data) {
+                    Ok(loaded_data) => {
+                        self.erp_data = loaded_data;
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to parse ERP data: {}", e);
+                        // 파일이 손상된 경우 새로운 데이터로 초기화
+                        self.erp_data = ERPData::default();
+                    }
+                }
+            }
+            Err(_) => {
+                // 파일이 없는 경우 새로운 데이터로 초기화
+                self.erp_data = ERPData::default();
+                self.save_erp_data(); // 빈 데이터 파일 생성
             }
         }
     }
-
     fn save_erp_data(&self) {
         if let Ok(json_data) = serde_json::to_string_pretty(&self.erp_data) {
-            fs::write("erp_data.json", json_data).unwrap();
+            if let Err(e) = fs::write("erp_data.json", json_data) {
+                eprintln!("Failed to save ERP data: {}", e);
+            }
         }
     }
 
@@ -93,24 +167,31 @@ impl ERPApp {
     }
 
     fn save_custom_structures(&self) {
+        println!("Saving structures to file...");
         if let Ok(json_data) = serde_json::to_string_pretty(&self.custom_structures) {
-            fs::write("custom_structures.json", json_data).unwrap();
+            if let Err(e) = fs::write("custom_structures.json", json_data) {
+                println!("Failed to save structures: {}", e);
+            } else {
+                println!("Structures saved successfully");
+            }
+        } else {
+            println!("Failed to serialize structures");
         }
     }
 
     fn new() -> Self {
         let mut app = Self::default();
         app.load_custom_structures();
+        app.load_erp_data(); // 시작할 때 ERP 데이터도 로드
         app
     }
-
     fn render_setting_panel(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.heading("카테고리 관리");
             if ui.button("➕ 새 카테고리").clicked() {
                 self.custom_structures.push(CustomCategory {
                     name: "새 카테고리".to_string(),
-                    fields: Vec::new(),
+                    subcategories: Vec::new(),
                 });
             }
             if ui.button("💾 저장하기").clicked() {
@@ -119,35 +200,57 @@ impl ERPApp {
         });
         ui.separator();
 
-        // 카테고리 목록과 구조체 생성 버튼
+        // 카테고리 목록
         let mut category_to_remove = None;
-        for (idx, category) in self.custom_structures.iter_mut().enumerate() {
+        for (cat_idx, category) in self.custom_structures.iter_mut().enumerate() {
             ui.group(|ui| {
                 ui.horizontal(|ui| {
                     ui.text_edit_singleline(&mut category.name);
                     if ui.button("🗑️").clicked() {
-                        category_to_remove = Some(idx);
+                        category_to_remove = Some(cat_idx);
+                    }
+                    if ui.button("➕ 새 서브카테고리").clicked() {
+                        category.subcategories.push(SubCategory {
+                            name: "새 서브카테고리".to_string(),
+                            structures: Vec::new(),
+                        });
                     }
                 });
 
-                ui.horizontal(|ui| {
-                    if ui.button("➕ 새 구조체 추가").clicked() {
-                        self.current_structure = CustomStructure::default();
-                        self.selected_category = Some(category.name.clone());
-                        self.show_structure_editor = true;
-                    }
-                });
+                // 서브카테고리 목록
+                let mut subcategory_to_remove = None;
+                for (sub_idx, subcategory) in category.subcategories.iter_mut().enumerate() {
+                    ui.indent(format!("sub_{}", sub_idx), |ui| {
+                        ui.horizontal(|ui| {
+                            ui.text_edit_singleline(&mut subcategory.name);
+                            if ui.button("🗑️").clicked() {
+                                subcategory_to_remove = Some(sub_idx);
+                            }
+                            if ui.button("➕ 새 구조체").clicked() {
+                                self.current_structure = CustomStructure::default();
+                                self.selected_category = Some(category.name.clone());
+                                self.current_subcategory = Some(subcategory.name.clone());
+                                self.show_structure_editor = true;
+                            }
+                        });
 
-                // 해당 카테고리의 구조체 목록 표시
-                for structure in &category.fields {
-                    ui.horizontal(|ui| {
-                        ui.label(&structure.name);
-                        if ui.button("✏️").clicked() {
-                            self.current_structure = structure.clone();
-                            self.selected_category = Some(category.name.clone());
-                            self.show_structure_editor = true;
+                        // 해당 서브카테고리의 구조체 목록
+                        for structure in &subcategory.structures {
+                            ui.horizontal(|ui| {
+                                ui.label(&structure.name);
+                                if ui.button("✏️").clicked() {
+                                    self.current_structure = structure.clone();
+                                    self.selected_category = Some(category.name.clone());
+                                    self.current_subcategory = Some(subcategory.name.clone());
+                                    self.show_structure_editor = true;
+                                }
+                            });
                         }
                     });
+                }
+
+                if let Some(idx) = subcategory_to_remove {
+                    category.subcategories.remove(idx);
                 }
             });
         }
@@ -157,7 +260,7 @@ impl ERPApp {
             self.custom_structures.remove(idx);
         }
 
-        // 구조체 편집기가 활성화된 경우에만 표시
+        // 구조체 편집기
         if self.show_structure_editor {
             self.render_structure_editor(ui);
         }
@@ -182,63 +285,143 @@ impl ERPApp {
 
             // 필드 목록 표시
             let mut fields_to_remove = Vec::new();
-            for (idx, field) in self.current_structure.fields.iter_mut().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.text_edit_singleline(&mut field.name);
-                    egui::ComboBox::from_id_source(format!("field_type_{}", idx))
-                        .selected_text(format!("{:?}", field.field_type))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut field.field_type, FieldType::Text, "텍스트");
-                            ui.selectable_value(&mut field.field_type, FieldType::Number, "숫자");
-                            ui.selectable_value(&mut field.field_type, FieldType::Date, "날짜");
-                            ui.selectable_value(
-                                &mut field.field_type,
-                                FieldType::Boolean,
-                                "참/거짓",
-                            );
+            ScrollArea::vertical()
+                .id_source("fields_list")
+                .show(ui, |ui| {
+                    for (idx, field) in self.current_structure.fields.iter_mut().enumerate() {
+                        ui.group(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("필드 이름:");
+                                ui.add_sized(
+                                    Vec2::new(150.0, 20.0),
+                                    egui::TextEdit::singleline(&mut field.name),
+                                );
+
+                                ui.label("타입:");
+                                egui::ComboBox::from_id_source(format!("field_type_{}", idx))
+                                    .selected_text(format!("{:?}", field.field_type))
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut field.field_type,
+                                            FieldType::Text,
+                                            "텍스트",
+                                        );
+                                        ui.selectable_value(
+                                            &mut field.field_type,
+                                            FieldType::Number,
+                                            "숫자",
+                                        );
+                                        ui.selectable_value(
+                                            &mut field.field_type,
+                                            FieldType::Date,
+                                            "날짜",
+                                        );
+                                        ui.selectable_value(
+                                            &mut field.field_type,
+                                            FieldType::Boolean,
+                                            "참/거짓",
+                                        );
+                                    });
+
+                                if ui.button("🗑️ 삭제").clicked() {
+                                    fields_to_remove.push(idx);
+                                }
+                            });
                         });
-                    if ui.button("🗑️").clicked() {
-                        fields_to_remove.push(idx);
                     }
                 });
-            }
 
             // 필드 삭제 처리
             for idx in fields_to_remove.iter().rev() {
                 self.current_structure.fields.remove(*idx);
             }
 
-            // 저장 버튼
+            ui.add_space(20.0);
+            ui.separator();
+            ui.add_space(10.0);
+
+            // 저장 버튼 섹션
             ui.horizontal(|ui| {
                 if ui.button("💾 구조체 저장").clicked() {
-                    if let Some(category_name) = &self.selected_category {
-                        if let Some(category) = self
-                            .custom_structures
-                            .iter_mut()
-                            .find(|c| &c.name == category_name)
+                    if !self.current_structure.name.is_empty() {
+                        let category_name = self.selected_category.clone();
+                        let subcategory_name = self.current_subcategory.clone();
+                        let structure_name = self.current_structure.name.clone();
+
+                        if let (Some(cat_name), Some(subcat_name)) =
+                            (category_name, subcategory_name)
                         {
-                            // 기존 구조체 수정 또는 새 구조체 추가
-                            if let Some(existing_idx) = category
-                                .fields
-                                .iter()
-                                .position(|s| s.name == self.current_structure.name)
+                            if let Some(category) = self
+                                .custom_structures
+                                .iter_mut()
+                                .find(|c| c.name == cat_name)
                             {
-                                category.fields[existing_idx] = self.current_structure.clone();
+                                if let Some(subcategory) = category
+                                    .subcategories
+                                    .iter_mut()
+                                    .find(|s| s.name == subcat_name)
+                                {
+                                    let is_new = !subcategory
+                                        .structures
+                                        .iter()
+                                        .any(|s| s.name == self.current_structure.name);
+
+                                    // 구조체 저장
+                                    if let Some(idx) = subcategory
+                                        .structures
+                                        .iter()
+                                        .position(|s| s.name == self.current_structure.name)
+                                    {
+                                        subcategory.structures[idx] =
+                                            self.current_structure.clone();
+                                    } else {
+                                        subcategory.structures.push(self.current_structure.clone());
+                                    }
+
+                                    // 새 구조체인 경우 빈 데이터 초기화
+                                    if is_new {
+                                        self.erp_data.data.insert(structure_name, Vec::new());
+                                        self.save_erp_data();
+                                    }
+
+                                    self.save_custom_structures();
+                                    self.show_structure_editor = false;
+
+                                    // 성공 메시지 출력
+                                    println!("구조체가 성공적으로 저장되었습니다!");
+                                } else {
+                                    println!("서브카테고리를 찾을 수 없습니다: {}", subcat_name);
+                                }
                             } else {
-                                category.fields.push(self.current_structure.clone());
+                                println!("카테고리를 찾을 수 없습니다: {}", cat_name);
                             }
-                            self.save_custom_structures();
-                            self.show_structure_editor = false;
+                        } else {
+                            println!("카테고리 또는 서브카테고리가 선택되지 않았습니다.");
                         }
+                    } else {
+                        println!("구조체 이름을 입력해주세요!");
                     }
                 }
+
                 if ui.button("❌ 취소").clicked() {
                     self.show_structure_editor = false;
                 }
+
+                // 현재 선택된 카테고리와 서브카테고리 정보 표시
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::RIGHT), |ui| {
+                    ui.label(format!(
+                        "저장 위치: {} > {}",
+                        self.selected_category
+                            .as_ref()
+                            .unwrap_or(&"없음".to_string()),
+                        self.current_subcategory
+                            .as_ref()
+                            .unwrap_or(&"없음".to_string())
+                    ));
+                });
             });
         });
     }
-
     fn render_custom_structures_list(&mut self, ui: &mut Ui) {
         let mut custom_structures = self.custom_structures.clone();
 
@@ -380,41 +563,44 @@ impl ERPApp {
                 }
             });
     }
-
     fn render_erp_panel(&mut self, ui: &mut Ui) {
         if let Some(selected_structure_name) = &self.selected_structure.clone() {
+            // 선택된 구조체 찾기
             let selected_structure = self
                 .custom_structures
                 .iter()
                 .find_map(|category| {
-                    category
-                        .fields
-                        .iter()
-                        .find(|structure| &structure.name == selected_structure_name)
+                    category.subcategories.iter().find_map(|subcategory| {
+                        subcategory
+                            .structures
+                            .iter()
+                            .find(|structure| &structure.name == selected_structure_name)
+                    })
                 })
                 .cloned();
 
-            if let Some(structure) = selected_structure.clone() {
+            if let Some(structure) = selected_structure {
                 // 상단 툴바
                 ui.horizontal(|ui| {
                     ui.heading(&structure.name);
+                    let structure_clone = structure.clone();
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("📥 CSV 내보내기").clicked() {
-                            if let Err(e) = self.save_as_csv(&structure) {
+                            if let Err(e) = self.save_as_csv(&structure_clone) {
                                 eprintln!("CSV 내보내기 실패: {}", e);
                             }
                         }
 
                         if ui.button("📤 CSV 불러오기").clicked() {
-                            if let Err(e) = self.load_from_csv(&structure) {
+                            if let Err(e) = self.load_from_csv(&structure_clone) {
                                 eprintln!("CSV 불러오기 실패: {}", e);
                             }
                         }
 
                         if ui.button("➕ 새 데이터").clicked() {
                             let mut new_row = HashMap::new();
-                            for field in &structure.fields {
+                            for field in &structure_clone.fields {
                                 new_row.insert(
                                     field.name.clone(),
                                     FieldValue {
@@ -426,7 +612,7 @@ impl ERPApp {
 
                             self.erp_data
                                 .data
-                                .entry(structure.name.clone())
+                                .entry(structure_clone.name.clone())
                                 .or_default()
                                 .push(new_row);
 
@@ -507,7 +693,7 @@ impl ERPApp {
                                 ui.end_row();
                             }
 
-                            // 모든 변경사항을 한 번에 처리
+                            // 변경사항 처리
                             if let Some(idx) = row_to_remove {
                                 rows_data.remove(idx);
                             }
@@ -592,42 +778,96 @@ impl ERPApp {
         ui.add_space(10.0);
         ui.heading("ERP 시스템");
         ui.separator();
-
+    
         ScrollArea::vertical()
             .id_source("sidebar_menu")
             .show(ui, |ui| {
-                // 카테고리별로 구조체 표시
-                for category in &self.custom_structures {
-                    let is_expanded = self
-                        .expanded_categories
-                        .entry(category.name.clone())
-                        .or_insert(true);
-
+                // 먼저 필요한 데이터를 복사
+                let categories_data: Vec<(&CustomCategory, bool)> = self.custom_structures.iter()
+                    .map(|category| {
+                        let is_expanded = *self.expanded_categories
+                            .get(&category.name)
+                            .unwrap_or(&true);
+                        (category, is_expanded)
+                    })
+                    .collect();
+    
+                // 상태 변경을 저장할 벡터들
+                let mut toggle_category: Option<String> = None;
+                let mut toggle_subcategory: Option<(String, String)> = None;
+                let mut select_structure: Option<String> = None;
+    
+                // UI 렌더링
+                for (category, is_category_expanded) in categories_data {
                     ui.horizontal(|ui| {
-                        if ui.button(if *is_expanded { "📂" } else { "📁" }).clicked() {
-                            *is_expanded = !*is_expanded;
+                        if ui.button(if is_category_expanded { "📂" } else { "📁" }).clicked() {
+                            toggle_category = Some(category.name.clone());
                         }
                         ui.label(&category.name);
                     });
-
-                    if *is_expanded {
+    
+                    if is_category_expanded {
                         ui.indent(category.name.clone(), |ui| {
-                            for structure in &category.fields {
-                                let selected = self
-                                    .selected_structure
-                                    .as_ref()
-                                    .map_or(false, |s| s == &structure.name);
-
-                                if ui.selectable_label(selected, &structure.name).clicked() {
-                                    self.selected_structure = Some(structure.name.clone());
-                                    self.show_setting_panel = false;
+                            for subcategory in &category.subcategories {
+                                let sub_expanded = *self.expanded_subcategories
+                                    .get(&format!("{}-{}", category.name, subcategory.name))
+                                    .unwrap_or(&true);
+    
+                                ui.horizontal(|ui| {
+                                    if ui.button(if sub_expanded { "📂" } else { "📁" }).clicked() {
+                                        toggle_subcategory = Some((
+                                            category.name.clone(),
+                                            subcategory.name.clone()
+                                        ));
+                                    }
+                                    ui.label(&subcategory.name);
+                                });
+    
+                                if sub_expanded {
+                                    ui.indent(subcategory.name.clone(), |ui| {
+                                        for structure in &subcategory.structures {
+                                            let selected = self.selected_structure
+                                                .as_ref()
+                                                .map_or(false, |s| s == &structure.name);
+                                            
+                                            if ui.selectable_label(selected, &structure.name).clicked() {
+                                                select_structure = Some(structure.name.clone());
+                                            }
+                                        }
+                                    });
                                 }
                             }
                         });
                     }
                 }
+    
+                // 상태 업데이트
+                if let Some(category_name) = toggle_category {
+                    let entry = self.expanded_categories
+                        .entry(category_name)
+                        .or_insert(true);
+                    *entry = !*entry;
+                }
+    
+                if let Some((category_name, subcategory_name)) = toggle_subcategory {
+                    let key = format!("{}-{}", category_name, subcategory_name);
+                    let entry = self.expanded_subcategories
+                        .entry(key)
+                        .or_insert(true);
+                    *entry = !*entry;
+                }
+    
+                if let Some(structure_name) = select_structure {
+                    self.selected_structure = Some(structure_name.clone());
+                    self.show_setting_panel = false;
+                    
+                    // 선택된 구조체의 데이터 불러오기
+                    if !self.erp_data.data.contains_key(&structure_name) {
+                        self.load_structure_data(&structure_name);
+                    }
+                }
             });
-
+    
         // 설정 버튼
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
             ui.add_space(10.0);

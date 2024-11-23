@@ -1,39 +1,27 @@
 [
   {
-    "name": "fqfqfqfㄹㅁㄹㅁㄹ",
-    "fields": [
+    "name": "인적사항",
+    "subcategories": [
       {
-        "name": "ㄹㄹㅁㄹㅁㅁㄹ",
-        "fields": [
+        "name": "제무회계",
+        "structures": [
           {
             "name": "이름",
-            "field_type": "Text"
-          }
-        ]
-      },
-      {
-        "name": "ㄹㄹㅁㄹㅁㅁㄹㅁㄹ",
-        "fields": []
-      }
-    ]
-  },
-  {
-    "name": "ㄹㅂㄹㅂㄹㅂㄹㄹㄹㄹㅁㄹㅁㄹㅁ",
-    "fields": []
-  },
-  {
-    "name": "ㅁㅁㄹㄹㅁㄹ",
-    "fields": []
-  },
-  {
-    "name": "인사관리",
-    "fields": [
-      {
-        "name": "직원",
-        "fields": [
+            "fields": [
+              {
+                "name": "이름",
+                "field_type": "Text"
+              }
+            ]
+          },
           {
-            "name": "이름",
-            "field_type": "Text"
+            "name": "전화번호",
+            "fields": [
+              {
+                "name": "호이름",
+                "field_type": "Text"
+              }
+            ]
           }
         ]
       }
