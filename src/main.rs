@@ -93,39 +93,31 @@ impl ERPApp {
     }
 
     fn load_structure_data(&mut self, structure_name: &str) {
-        // CSV 파일에서 데이터 로드 시도
         if let Ok(mut rdr) = csv::Reader::from_path(format!("{}.csv", structure_name)) {
             let mut rows = Vec::new();
-
+            
             for result in rdr.records() {
                 if let Ok(record) = result {
                     if let Some(structure) = self.find_structure(structure_name) {
                         let mut row_data = HashMap::new();
-
+                        
                         for (idx, field) in structure.fields.iter().enumerate() {
                             let value = record.get(idx).unwrap_or_default().to_string();
-                            row_data.insert(
-                                field.name.clone(),
-                                FieldValue {
-                                    value,
-                                    field_type: field.field_type.clone(),
-                                },
-                            );
+                            row_data.insert(field.name.clone(), FieldValue {
+                                value,
+                                field_type: field.field_type.clone(),
+                            });
                         }
-
+                        
                         rows.push(row_data);
                     }
                 }
             }
-
-            // 데이터 저장
+            
             self.erp_data.data.insert(structure_name.to_string(), rows);
             self.save_erp_data();
         } else {
-            // CSV 파일이 없으면 빈 데이터로 초기화
-            self.erp_data
-                .data
-                .insert(structure_name.to_string(), Vec::new());
+            self.erp_data.data.insert(structure_name.to_string(), Vec::new());
             self.save_erp_data();
         }
     }
@@ -263,6 +255,52 @@ impl ERPApp {
         // 구조체 편집기
         if self.show_structure_editor {
             self.render_structure_editor(ui);
+        }
+    }
+    fn save_to_csv(&self, structure_name: &str) {
+        if let Some(structure) = self.find_structure(structure_name) {
+            if let Some(rows) = self.erp_data.data.get(structure_name) {
+                match csv::Writer::from_path(format!("{}.csv", structure_name)) {
+                    Ok(mut writer) => {
+                        // 헤더 작성
+                        let headers: Vec<String> = structure
+                            .fields
+                            .iter()
+                            .map(|field| field.name.clone())
+                            .collect();
+                        if let Err(e) = writer.write_record(&headers) {
+                            eprintln!("헤더 저장 실패: {}", e);
+                            return;
+                        }
+
+                        // 데이터 작성
+                        for row in rows {
+                            let record: Vec<String> = structure
+                                .fields
+                                .iter()
+                                .map(|field| {
+                                    row.get(&field.name)
+                                        .map(|fv| fv.value.clone())
+                                        .unwrap_or_default()
+                                })
+                                .collect();
+                            if let Err(e) = writer.write_record(&record) {
+                                eprintln!("데이터 저장 실패: {}", e);
+                                return;
+                            }
+                        }
+
+                        if let Err(e) = writer.flush() {
+                            eprintln!("파일 저장 실패: {}", e);
+                            return;
+                        }
+                        println!("CSV 파일 저장 완료: {}.csv", structure_name);
+                    }
+                    Err(e) => {
+                        eprintln!("CSV 파일 생성 실패: {}", e);
+                    }
+                }
+            }
         }
     }
 
@@ -778,59 +816,69 @@ impl ERPApp {
         ui.add_space(10.0);
         ui.heading("ERP 시스템");
         ui.separator();
-    
+
         ScrollArea::vertical()
             .id_source("sidebar_menu")
             .show(ui, |ui| {
                 // 먼저 필요한 데이터를 복사
-                let categories_data: Vec<(&CustomCategory, bool)> = self.custom_structures.iter()
+                let categories_data: Vec<(&CustomCategory, bool)> = self
+                    .custom_structures
+                    .iter()
                     .map(|category| {
-                        let is_expanded = *self.expanded_categories
+                        let is_expanded = *self
+                            .expanded_categories
                             .get(&category.name)
                             .unwrap_or(&true);
                         (category, is_expanded)
                     })
                     .collect();
-    
+
                 // 상태 변경을 저장할 벡터들
                 let mut toggle_category: Option<String> = None;
                 let mut toggle_subcategory: Option<(String, String)> = None;
                 let mut select_structure: Option<String> = None;
-    
+
                 // UI 렌더링
                 for (category, is_category_expanded) in categories_data {
                     ui.horizontal(|ui| {
-                        if ui.button(if is_category_expanded { "📂" } else { "📁" }).clicked() {
+                        if ui
+                            .button(if is_category_expanded { "📂" } else { "📁" })
+                            .clicked()
+                        {
                             toggle_category = Some(category.name.clone());
                         }
                         ui.label(&category.name);
                     });
-    
+
                     if is_category_expanded {
                         ui.indent(category.name.clone(), |ui| {
                             for subcategory in &category.subcategories {
-                                let sub_expanded = *self.expanded_subcategories
+                                let sub_expanded = *self
+                                    .expanded_subcategories
                                     .get(&format!("{}-{}", category.name, subcategory.name))
                                     .unwrap_or(&true);
-    
+
                                 ui.horizontal(|ui| {
-                                    if ui.button(if sub_expanded { "📂" } else { "📁" }).clicked() {
-                                        toggle_subcategory = Some((
-                                            category.name.clone(),
-                                            subcategory.name.clone()
-                                        ));
+                                    if ui.button(if sub_expanded { "📂" } else { "📁" }).clicked()
+                                    {
+                                        toggle_subcategory =
+                                            Some((category.name.clone(), subcategory.name.clone()));
                                     }
                                     ui.label(&subcategory.name);
                                 });
-    
+
                                 if sub_expanded {
                                     ui.indent(subcategory.name.clone(), |ui| {
                                         for structure in &subcategory.structures {
-                                            let selected = self.selected_structure
+                                            let selected = self
+                                                .selected_structure
                                                 .as_ref()
                                                 .map_or(false, |s| s == &structure.name);
-                                            
-                                            if ui.selectable_label(selected, &structure.name).clicked() {
+
+                                            if ui
+                                                .selectable_label(selected, &structure.name)
+                                                .clicked()
+                                            {
                                                 select_structure = Some(structure.name.clone());
                                             }
                                         }
@@ -840,34 +888,33 @@ impl ERPApp {
                         });
                     }
                 }
-    
+
                 // 상태 업데이트
                 if let Some(category_name) = toggle_category {
-                    let entry = self.expanded_categories
+                    let entry = self
+                        .expanded_categories
                         .entry(category_name)
                         .or_insert(true);
                     *entry = !*entry;
                 }
-    
+
                 if let Some((category_name, subcategory_name)) = toggle_subcategory {
                     let key = format!("{}-{}", category_name, subcategory_name);
-                    let entry = self.expanded_subcategories
-                        .entry(key)
-                        .or_insert(true);
+                    let entry = self.expanded_subcategories.entry(key).or_insert(true);
                     *entry = !*entry;
                 }
-    
+
                 if let Some(structure_name) = select_structure {
                     self.selected_structure = Some(structure_name.clone());
                     self.show_setting_panel = false;
-                    
+
                     // 선택된 구조체의 데이터 불러오기
                     if !self.erp_data.data.contains_key(&structure_name) {
                         self.load_structure_data(&structure_name);
                     }
                 }
             });
-    
+
         // 설정 버튼
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
             ui.add_space(10.0);
@@ -927,7 +974,11 @@ impl eframe::App for ERPApp {
             .show(ctx, |ui| {
                 self.render_sidebar(ui);
             });
-
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
+            if let Some(selected_structure_name) = &self.selected_structure {
+                self.save_to_csv(selected_structure_name);
+            }
+        }
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.show_setting_panel {
                 self.render_setting_panel(ui);
