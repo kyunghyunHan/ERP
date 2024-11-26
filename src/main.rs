@@ -76,9 +76,41 @@ struct ERPApp {
     selected_category: Option<String>,
     expanded_categories: HashMap<String, bool>,
     expanded_subcategories: HashMap<String, bool>, // 서브카테고리 확장 상태
+    selected_tab: String,
+    show_category_selector: bool, // 카테고리 선택 팝업 표시 여부
 }
 
 impl ERPApp {
+    fn render_category_selector_popup(&mut self, ctx: &Context) {
+        if self.show_category_selector {
+            egui::Window::new("카테고리 선택")
+                .fixed_size([300.0, 400.0])
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.heading("카테고리 목록");
+                    ui.separator();
+
+                    ScrollArea::vertical().show(ui, |ui| {
+                        for category in &self.custom_structures {
+                            if ui.button(&category.name).clicked() {
+                                self.selected_category = Some(category.name.clone());
+                                self.show_category_selector = false; // 선택 후 팝업 닫기
+
+                                // 선택된 카테고리 펼치기
+                                self.expanded_categories.clear();
+                                self.expanded_categories.insert(category.name.clone(), true);
+                            }
+                        }
+                    });
+
+                    ui.separator();
+                    if ui.button("닫기").clicked() {
+                        self.show_category_selector = false;
+                    }
+                });
+        }
+    }
+
     fn find_structure(&self, structure_name: &str) -> Option<CustomStructure> {
         for category in &self.custom_structures {
             for subcategory in &category.subcategories {
@@ -937,103 +969,102 @@ impl ERPApp {
         self.save_erp_data();
         Ok(())
     }
+    fn render_top_menu(&mut self, ui: &mut Ui) {
+        // 필요한 데이터를 미리 복사
+        let category_names: Vec<String> = self
+            .custom_structures
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+
+        let selected_tab = self.selected_tab.clone();
+
+        ui.horizontal(|ui| {
+            // 복사된 데이터를 사용하여 탭 렌더링
+            for name in category_names {
+                let is_selected = selected_tab == name;
+                if ui.selectable_label(is_selected, &name).clicked() {
+                    self.selected_tab = name.clone();
+                    self.expanded_categories.clear();
+                    self.expanded_subcategories.clear();
+                    self.expanded_categories.insert(name, true);
+                }
+            }
+        });
+        ui.separator();
+    }
     fn render_sidebar(&mut self, ui: &mut Ui) {
         ui.add_space(10.0);
-        ui.heading("ERP 시스템");
+
+        // 현재 선택된 카테고리 이름을 표시하고 클릭시 팝업
+        let current_category_name = self
+            .selected_category
+            .as_ref()
+            .map(|name| name.as_str())
+            .unwrap_or("카테고리 선택");
+
+        if ui.button(current_category_name).clicked() {
+            self.show_category_selector = true;
+        }
+
         ui.separator();
 
         ScrollArea::vertical()
             .id_source("sidebar_menu")
             .show(ui, |ui| {
-                // 먼저 필요한 데이터를 복사
-                let categories_data: Vec<(&CustomCategory, bool)> = self
-                    .custom_structures
-                    .iter()
-                    .map(|category| {
-                        let is_expanded = *self
-                            .expanded_categories
-                            .get(&category.name)
-                            .unwrap_or(&true);
-                        (category, is_expanded)
-                    })
-                    .collect();
+                // 현재 선택된 카테고리의 서브카테고리와 구조체만 표시
+                let selected_category = self.selected_category.clone();
+                let category_data = selected_category.as_ref().and_then(|selected_cat| {
+                    self.custom_structures
+                        .iter()
+                        .find(|c| &c.name == selected_cat)
+                        .cloned()
+                });
 
-                // 상태 변경을 저장할 벡터들
-                let mut toggle_category: Option<String> = None;
-                let mut toggle_subcategory: Option<(String, String)> = None;
-                let mut select_structure: Option<String> = None;
+                // 상태 변경을 추적하기 위한 변수들
+                let mut subcategory_toggles = Vec::new();
+                let mut structure_selection = None;
 
-                // UI 렌더링
-                for (category, is_category_expanded) in categories_data {
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button(if is_category_expanded { "📂" } else { "📁" })
-                            .clicked()
-                        {
-                            toggle_category = Some(category.name.clone());
-                        }
-                        ui.label(&category.name);
-                    });
+                if let Some(category) = category_data {
+                    // 서브카테고리 표시
+                    for subcategory in &category.subcategories {
+                        let sub_key = format!("{}-{}", category.name, subcategory.name);
+                        let sub_expanded =
+                            *self.expanded_subcategories.get(&sub_key).unwrap_or(&true);
 
-                    if is_category_expanded {
-                        ui.indent(category.name.clone(), |ui| {
-                            for subcategory in &category.subcategories {
-                                let sub_expanded = *self
-                                    .expanded_subcategories
-                                    .get(&format!("{}-{}", category.name, subcategory.name))
-                                    .unwrap_or(&true);
-
-                                ui.horizontal(|ui| {
-                                    if ui.button(if sub_expanded { "📂" } else { "📁" }).clicked()
-                                    {
-                                        toggle_subcategory =
-                                            Some((category.name.clone(), subcategory.name.clone()));
-                                    }
-                                    ui.label(&subcategory.name);
-                                });
-
-                                if sub_expanded {
-                                    ui.indent(subcategory.name.clone(), |ui| {
-                                        for structure in &subcategory.structures {
-                                            let selected = self
-                                                .selected_structure
-                                                .as_ref()
-                                                .map_or(false, |s| s == &structure.name);
-
-                                            if ui
-                                                .selectable_label(selected, &structure.name)
-                                                .clicked()
-                                            {
-                                                select_structure = Some(structure.name.clone());
-                                            }
-                                        }
-                                    });
-                                }
+                        ui.horizontal(|ui| {
+                            if ui.button(if sub_expanded { "📂" } else { "📁" }).clicked() {
+                                subcategory_toggles.push((sub_key.clone(), !sub_expanded));
                             }
+                            ui.label(&subcategory.name);
                         });
+
+                        if sub_expanded {
+                            ui.indent(subcategory.name.clone(), |ui| {
+                                for structure in &subcategory.structures {
+                                    let selected = self
+                                        .selected_structure
+                                        .as_ref()
+                                        .map_or(false, |s| s == &structure.name);
+
+                                    if ui.selectable_label(selected, &structure.name).clicked() {
+                                        structure_selection = Some(structure.name.clone());
+                                    }
+                                }
+                            });
+                        }
                     }
                 }
 
-                // 상태 업데이트
-                if let Some(category_name) = toggle_category {
-                    let entry = self
-                        .expanded_categories
-                        .entry(category_name)
-                        .or_insert(true);
-                    *entry = !*entry;
+                // 상태 업데이트 처리
+                for (key, value) in subcategory_toggles {
+                    self.expanded_subcategories.insert(key, value);
                 }
 
-                if let Some((category_name, subcategory_name)) = toggle_subcategory {
-                    let key = format!("{}-{}", category_name, subcategory_name);
-                    let entry = self.expanded_subcategories.entry(key).or_insert(true);
-                    *entry = !*entry;
-                }
-
-                if let Some(structure_name) = select_structure {
+                if let Some(structure_name) = structure_selection {
                     self.selected_structure = Some(structure_name.clone());
                     self.show_setting_panel = false;
 
-                    // 선택된 구조체의 데이터 불러오기
                     if !self.erp_data.data.contains_key(&structure_name) {
                         self.load_structure_data(&structure_name);
                     }
@@ -1093,17 +1124,16 @@ impl eframe::App for ERPApp {
 
         ctx.set_fonts(fonts);
 
-        // 사이드바 구현
+        // egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+        //     self.render_top_menu(ui);
+        // });
+
         egui::SidePanel::left("side_panel")
             .max_width(200.0)
             .show(ctx, |ui| {
                 self.render_sidebar(ui);
             });
-        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
-            if let Some(selected_structure_name) = &self.selected_structure {
-                self.save_to_csv(selected_structure_name);
-            }
-        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.show_setting_panel {
                 self.render_setting_panel(ui);
@@ -1111,11 +1141,12 @@ impl eframe::App for ERPApp {
                 self.render_erp_panel(ui);
             }
         });
+        self.render_category_selector_popup(ctx);
     }
 }
 
 fn main() {
-    let mut app = ERPApp::default();
+    let mut app: ERPApp = ERPApp::default();
     app.load_custom_structures();
 
     let options = eframe::NativeOptions {
